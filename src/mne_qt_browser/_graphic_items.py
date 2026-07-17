@@ -71,6 +71,13 @@ class AnnotRegion(LinearRegionItem):
         self.description = description
         self.old_onset = values[0]
         self.selected = False
+        # Index of this region's annotation in inst.annotations; assigned by
+        # MNEQtBrowser._renumber_regions and kept in sync by all annotation
+        # edits
+        self.annot_idx = None
+        # Regions merged away by the most recent region change, stored for
+        # MNEQtBrowser._region_changed to remove
+        self._merge_removed_regions = []
 
         self.label_item = TextItem(text=description, anchor=(0.5, 0.5))
         self.label_item.setFont(_q_font(10, bold=True))
@@ -87,19 +94,16 @@ class AnnotRegion(LinearRegionItem):
         self.mne.plt.addItem(self.label_item, ignoreBounds=True)
 
     def _region_changed(self):
-        # Check for overlapping regions
+        # Check for overlapping regions (same interval-overlap logic as
+        # _merge_annotations uses for the annotations)
+        rgn = self.getRegion()
         overlap_has_sca = []
         overlapping_regions = list()
         for region in self.mne.regions:
             if region.description != self.description or id(self) == id(region):
                 continue
             values = region.getRegion()
-            if any(
-                self.getRegion()[0] <= val <= self.getRegion()[1] for val in values
-            ) or (
-                (values[0] <= self.getRegion()[0] <= values[1])
-                and (values[0] <= self.getRegion()[1] <= values[1])
-            ):
+            if values[0] <= rgn[1] and values[1] >= rgn[0]:
                 overlapping_regions.append(region)
                 overlap_has_sca.append(len(region.single_channel_annots) > 0)
 
@@ -107,16 +111,19 @@ class AnnotRegion(LinearRegionItem):
         if (len(self.single_channel_annots) > 0 or any(overlap_has_sca)) and len(
             overlapping_regions
         ) > 0:
-            dur = self.getRegion()[1] - self.getRegion()[0]
+            dur = rgn[1] - rgn[0]
             self.setRegion((self.old_onset, self.old_onset + dur))
             warn("Can not combine channel-based annotations with any other annotation.")
             return
 
         # figure out new boundaries
         regions_ = np.array(
-            [region.getRegion() for region in overlapping_regions] + [self.getRegion()]
+            [region.getRegion() for region in overlapping_regions] + [rgn]
         )
 
+        # MNEQtBrowser._region_changed merges the annotations accordingly and
+        # removes the merged-away regions
+        self._merge_removed_regions = overlapping_regions
         self.regionChangeFinished.emit(self)
 
         onset = np.min(regions_[:, 0])
@@ -125,13 +132,13 @@ class AnnotRegion(LinearRegionItem):
         self.old_onset = onset
 
         logger.debug(f"New {self.description} region: {onset:.2f} - {offset:.2f}")
-        # remove overlapping regions
-        for region in overlapping_regions:
-            self.weakmain()._remove_region(region, from_annot=False)
         # re-set while blocking the signal to avoid re-running this function
         with QSignalBlocker(self):
             self.setRegion((onset, offset))
 
+        main = self.weakmain()
+        main._renumber_regions()
+        main.mne.overview_bar.update_annotations()
         self.update_label_pos()
 
     def _add_single_channel_annot(self, ch_name):
@@ -153,8 +160,7 @@ class AnnotRegion(LinearRegionItem):
             )
             return
 
-        region_idx = self.weakmain()._get_onset_idx(self.getRegion()[0])
-        self.weakmain()._toggle_single_channel_annotation(ch_name, region_idx)
+        self.weakmain()._toggle_single_channel_annotation(ch_name, self.annot_idx)
         if ch_name not in self.single_channel_annots.keys():
             self._add_single_channel_annot(ch_name)
         else:

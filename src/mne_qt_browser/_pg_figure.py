@@ -1738,8 +1738,8 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
 
         # Remove from annotations
         if from_annot:
-            idx = self._get_onset_idx(region.getRegion()[0])
-            self.mne.inst.annotations.delete(idx)
+            self.mne.inst.annotations.delete(region.annot_idx)
+            self._renumber_regions()
 
         # Update overview bar
         self.mne.overview_bar.update_annotations()
@@ -1752,33 +1752,45 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
         self.mne.selected_region = region
         self.mne.fig_annotation.update_values(region)
 
-    def _get_onset_idx(self, plot_onset):
-        onset = _sync_onset(self.mne.inst, plot_onset, inverse=True)
-        # Exact float equality can fail after round-trips through _sync_onset,
-        # so take the closest onset as long as it's within half a sample
-        dist = np.abs(self.mne.inst.annotations.onset - onset)
-        idx = int(np.argmin(dist))
-        assert dist[idx] < 0.5 / self.mne.info["sfreq"], (dist[idx], onset)
-        return idx
+    def _renumber_regions(self):
+        """Reassign each region's annot_idx after the annotations changed.
+
+        Annotations are kept sorted by onset (Annotations.append sorts), so
+        the region with the k-th smallest onset holds annotation k. The sort
+        here is stable, matching how equal onsets keep their previous order.
+        """
+        regions = self.mne.regions
+        assert len(regions) == len(self.mne.inst.annotations), (
+            len(regions),
+            len(self.mne.inst.annotations),
+        )
+        for idx, region in enumerate(
+            sorted(regions, key=lambda region: region.getRegion()[0])
+        ):
+            region.annot_idx = idx
 
     def _region_changed(self, region):
         rgn = region.getRegion()
         region.select(True)
-        idx = self._get_onset_idx(region.old_onset)
+        idx = region.annot_idx
         # update spinboxes of annot dock
         self.mne.fig_annotation.update_values(region)
         # edit inst.annotations
+        annotations = self.mne.inst.annotations
         onset = _sync_onset(self.mne.inst, rgn[0], inverse=True)
-        self.mne.inst.annotations.onset[idx] = onset
-        self.mne.inst.annotations.duration[idx] = rgn[1] - rgn[0]
+        annotations.onset[idx] = onset
+        annotations.duration[idx] = rgn[1] - rgn[0]
         _merge_annotations(
             onset,
             onset + rgn[1] - rgn[0],
             region.description,
-            self.mne.inst.annotations,
+            annotations,
         )
-        # update overview bar
-        self.mne.overview_bar.update_annotations()
+        # Remove the regions whose annotations were merged away; our caller
+        # (AnnotRegion._region_changed) then extends this region to the merged
+        # bounds, renumbers, and updates the overview bar
+        for merged_region in region._merge_removed_regions:
+            self._remove_region(merged_region, from_annot=False)
 
     def _draw_annotations(self):
         # All regions are constantly added to the scene and handled by Qt, which is
@@ -1815,6 +1827,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                 plot_onset, duration, description, ch_names=ch_names
             )
             region.update_visible(False)
+        self._renumber_regions()
 
         # Initialize showing annotation widgets
         self._change_annot_mode()
@@ -1847,6 +1860,8 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
             self._change_annot_mode()
 
     def _update_regions_visible(self):
+        # This runs on every horizontal scroll, so it must not touch the
+        # overview bar (annotations don't change when the view range does)
         if self.mne.is_epochs:
             return
         start = self.mne.t_start
@@ -1859,12 +1874,12 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
             else:
                 visible = False
             region.update_visible(visible)
-        self.mne.overview_bar.update_annotations()
 
     def _set_annotations_visible(self, visible):
         for descr in self.mne.visible_annotations:
             self.mne.visible_annotations[descr] = visible
         self._update_regions_visible()
+        self.mne.overview_bar.update_annotations()
 
     def _toggle_annotations(self):
         self.mne.annotations_visible = not self.mne.annotations_visible

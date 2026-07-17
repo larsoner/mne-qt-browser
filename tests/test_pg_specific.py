@@ -851,16 +851,48 @@ def test_time_scrollbar_page_step(raw_orig, pg_backend):
     assert ax_hscroll.pageStep() == int(fig.mne.scroll_sensitivity)
 
 
-def test_get_onset_idx_float_tolerance(raw_orig, pg_backend):
-    """Test that annotation lookup survives sub-sample float drift."""
-    raw_orig = raw_orig.copy().crop(tmax=5.0)
+def test_annotation_identity(raw_orig, pg_backend):
+    """Test that regions track their annotation indices through edits."""
+    raw_orig = raw_orig.copy().crop(tmax=10.0)
     first_time = raw_orig.first_time
-    raw_orig.annotations.append(1 + first_time, 1, "A")
-    raw_orig.annotations.append(3 + first_time, 1, "B")
+    for onset, description in [(1, "A"), (3, "B"), (5, "A")]:
+        raw_orig.annotations.append(onset + first_time, 1, description)
     fig = raw_orig.plot()
     fig.test_mode = True
-    plot_onset = 3.0
-    drift = 0.1 / raw_orig.info["sfreq"]
-    assert fig._get_onset_idx(plot_onset + drift) == 1
-    with pytest.raises(AssertionError):
-        fig._get_onset_idx(2.0)  # no annotation anywhere near
+    assert [r.annot_idx for r in fig.mne.regions] == [0, 1, 2]
+    # Removing an annotation renumbers the ones after it
+    fig._remove_region(fig.mne.regions[1])
+    assert len(raw_orig.annotations) == 2
+    assert [r.annot_idx for r in fig.mne.regions] == [0, 1]
+    assert [r.description for r in fig.mne.regions] == ["A", "A"]
+    # Editing a region keeps identity through the merge machinery
+    region = fig.mne.regions[0]
+    region.setRegion((1.0, 2.5))
+    assert len(raw_orig.annotations) == 2
+    assert_allclose(raw_orig.annotations.duration[region.annot_idx], 1.5)
+    # Extending region 0 over region 1 merges them into one
+    region.setRegion((1.0, 5.5))
+    assert len(raw_orig.annotations) == 1
+    assert len(fig.mne.regions) == 1
+    assert fig.mne.regions[0] is region
+    assert region.annot_idx == 0
+    assert_allclose(raw_orig.annotations.duration[0], 5.0)
+
+
+def test_annotation_merge_contained(raw_orig, pg_backend):
+    """Test dragging inside an existing same-description annotation."""
+    raw_orig = raw_orig.copy().crop(tmax=20.0).resample(100)
+    first_time = raw_orig.first_time
+    raw_orig.annotations.append(2 + first_time, 10, "A")
+    fig = raw_orig.plot(duration=raw_orig.duration)
+    fig.test_mode = True
+    fig._fake_keypress("a")
+    # Drag a new region fully inside the existing one: everything must merge
+    # into a single annotation represented by a single region
+    fig._fake_click(
+        (0.3, 0.5), add_points=[(0.5, 0.5)], xform="ax", button=1, kind="drag"
+    )
+    assert len(raw_orig.annotations) == 1
+    assert len(fig.mne.regions) == 1
+    assert_allclose(raw_orig.annotations.duration[0], 10.0)
+    assert len(fig.mne.overview_bar.annotations_rect_dict) == 1

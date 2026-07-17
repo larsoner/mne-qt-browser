@@ -159,8 +159,7 @@ class AnnotationDock(QDockWidget):
         edit_regions = [r for r in self.mne.regions if r.description == old_des]
         # Update regions & annotations
         for ed_region in edit_regions:
-            idx = self.weakmain()._get_onset_idx(ed_region.getRegion()[0])
-            self.mne.inst.annotations.description[idx] = new_des
+            self.mne.inst.annotations.description[ed_region.annot_idx] = new_des
             ed_region.update_description(new_des)
         # Update containers with annotation attributes
         self.mne.new_annotation_labels.remove(old_des)
@@ -182,7 +181,7 @@ class AnnotationDock(QDockWidget):
     def _edit_description_selected(self, new_des):
         """Update description only of selected region."""
         old_des = self.mne.selected_region.description
-        idx = self.weakmain()._get_onset_idx(self.mne.selected_region.getRegion()[0])
+        idx = self.mne.selected_region.annot_idx
         # Update regions & annotations
         self.mne.inst.annotations.description[idx] = new_des
         self.mne.selected_region.update_description(new_des)
@@ -310,6 +309,7 @@ class AnnotationDock(QDockWidget):
         clear_bt.clicked.disconnect()
 
         self.weakmain()._update_regions_visible()
+        self.mne.overview_bar.update_annotations()
 
     def _description_changed(self, descr_idx):
         new_descr = self.description_cmbx.itemText(descr_idx)
@@ -586,34 +586,41 @@ class RawViewBox(ViewBox):
                     drag_stop = 0 if drag_stop < 0 else drag_stop
                     xmax = self.mne.xmax + 1 / self.mne.info["sfreq"]
                     drag_stop = xmax if xmax < drag_stop else drag_stop
-                    self._drag_region.setRegion((self._drag_start, drag_stop))
+                    # Block signals so that only the explicit merge logic below
+                    # runs (setRegion would otherwise also trigger
+                    # AnnotRegion._region_changed)
+                    with QSignalBlocker(self._drag_region):
+                        self._drag_region.setRegion((self._drag_start, drag_stop))
                     plot_onset = min(self._drag_start, drag_stop)
                     plot_offset = max(self._drag_start, drag_stop)
                     duration = abs(self._drag_start - drag_stop)
 
                     # Add to annotations
+                    annotations = self.mne.inst.annotations
                     onset = _sync_onset(self.mne.inst, plot_onset, inverse=True)
                     _merge_annotations(
                         onset,
                         onset + duration,
                         self.mne.current_description,
-                        self.mne.inst.annotations,
+                        annotations,
                     )
 
-                    # Add to regions/merge regions
+                    # Merge overlapping regions (same interval-overlap logic
+                    # as _merge_annotations uses for the annotations)
                     merge_values = [plot_onset, plot_offset]
                     rm_regions = list()
                     for region in self.mne.regions:
                         if region.description != self.mne.current_description:
                             continue
                         values = region.getRegion()
-                        if any(plot_onset <= val <= plot_offset for val in values):
+                        if values[0] <= plot_offset and values[1] >= plot_onset:
                             merge_values += values
                             rm_regions.append(region)
                     if len(merge_values) > 2:
-                        self._drag_region.setRegion(
-                            (min(merge_values), max(merge_values))
-                        )
+                        with QSignalBlocker(self._drag_region):
+                            self._drag_region.setRegion(
+                                (min(merge_values), max(merge_values))
+                            )
                     for rm_region in rm_regions:
                         self.weakmain()._remove_region(rm_region, from_annot=False)
                     self.weakmain()._add_region(
@@ -622,6 +629,7 @@ class RawViewBox(ViewBox):
                         self.mne.current_description,
                         region=self._drag_region,
                     )
+                    self.weakmain()._renumber_regions()
                     self._drag_region.select(True)
                     self._drag_region.setZValue(2)
 
@@ -859,82 +867,73 @@ class OverviewBar(QGraphicsView):
             self.event_line_dict.clear()
 
     def update_annotations(self):
-        """Update representation of annotations."""
-        annotations = self.mne.inst.annotations
-        # Map onsets to annotation indices once (this method runs on every
-        # horizontal scroll, so avoid a full scan per rect below); for
-        # duplicate onsets keep the first index as np.where(...)[0][0] would
-        onset_to_idx = dict()
-        for annot_idx, onset in enumerate(annotations.onset):
-            onset_to_idx.setdefault(onset, annot_idx)
-        # Exclude non-visible annotations
-        annot_set = set(
-            [
-                annot["onset"]
-                for annot in annotations
-                if self.mne.visible_annotations[annot["description"]]
-            ]
-        )
-        rect_set = set(self.annotations_rect_dict)
+        """Update representation of annotations.
 
-        add_onsets = annot_set.difference(rect_set)
-        rm_onsets = rect_set.difference(annot_set)
+        The regions are the source of truth here: one rect is drawn per
+        region whose description is currently visible. Contrary to the region
+        items themselves, rects are not culled by the view range, since the
+        overview bar always shows the whole recording. This is only called
+        when annotations actually change, not on view-range changes.
+        """
+        regions = getattr(self.mne, "regions", [])
+        visible_regions = {
+            region
+            for region in regions
+            if self.mne.visible_annotations[region.description]
+        }
 
-        # Add missing onsets
-        for add_onset in add_onsets:
-            plot_onset = _sync_onset(self.mne.inst, add_onset)
-            annot_idx = onset_to_idx[add_onset]
-            duration = annotations.duration[annot_idx]
-            description = annotations.description[annot_idx]
-            color_name = self.mne.annotation_segment_colors[description]
-            color = _get_color(color_name, self.mne.dark)
-            color.setAlpha(150)
-            pen = self.mne.mkPen(color)
-            brush = mkBrush(color)
-            top_left = self._mapFromData(plot_onset, 0)
-            bottom_right = self._mapFromData(
-                plot_onset + duration, len(self.mne.ch_order)
-            )
-            rect = self.scene().addRect(QRectF(top_left, bottom_right), pen, brush)
-            rect.setZValue(3)
-            self.annotations_rect_dict[add_onset] = {
-                "rect": rect,
-                "plot_onset": plot_onset,
-                "duration": duration,
-                "color": color_name,
-            }
+        # Remove rects for regions that are gone or no longer visible
+        for region in list(self.annotations_rect_dict):
+            if region not in visible_regions:
+                self.scene().removeItem(self.annotations_rect_dict[region]["rect"])
+                self.annotations_rect_dict.pop(region)
 
-        # Remove onsets
-        for rm_onset in rm_onsets:
-            self.scene().removeItem(self.annotations_rect_dict[rm_onset]["rect"])
-            self.annotations_rect_dict.pop(rm_onset)
-
-        # Changes
-        for edit_onset in self.annotations_rect_dict:
-            plot_onset = _sync_onset(self.mne.inst, edit_onset)
-            annot_idx = onset_to_idx[edit_onset]
-            duration = annotations.duration[annot_idx]
-            rect_duration = self.annotations_rect_dict[edit_onset]["duration"]
-            rect = self.annotations_rect_dict[edit_onset]["rect"]
-            # Update changed duration
-            if duration != rect_duration:
-                self.annotations_rect_dict[edit_onset]["duration"] = duration
+        for region in regions:
+            if region not in visible_regions:
+                continue
+            plot_onset, plot_offset = region.getRegion()
+            duration = plot_offset - plot_onset
+            color_name = self.mne.annotation_segment_colors[region.description]
+            rect_dict = self.annotations_rect_dict.get(region)
+            if rect_dict is None:
+                # Add missing rect
+                color = _get_color(color_name, self.mne.dark)
+                color.setAlpha(150)
+                pen = self.mne.mkPen(color)
+                brush = mkBrush(color)
+                top_left = self._mapFromData(plot_onset, 0)
+                bottom_right = self._mapFromData(
+                    plot_onset + duration, len(self.mne.ch_order)
+                )
+                rect = self.scene().addRect(QRectF(top_left, bottom_right), pen, brush)
+                rect.setZValue(3)
+                self.annotations_rect_dict[region] = {
+                    "rect": rect,
+                    "plot_onset": plot_onset,
+                    "duration": duration,
+                    "color": color_name,
+                }
+                continue
+            rect = rect_dict["rect"]
+            # Update changed position or duration
+            if (plot_onset, duration) != (
+                rect_dict["plot_onset"],
+                rect_dict["duration"],
+            ):
+                rect_dict["plot_onset"] = plot_onset
+                rect_dict["duration"] = duration
                 top_left = self._mapFromData(plot_onset, 0)
                 bottom_right = self._mapFromData(
                     plot_onset + duration, len(self.mne.ch_order)
                 )
                 rect.setRect(QRectF(top_left, bottom_right))
             # Update changed color
-            description = annotations.description[annot_idx]
-            color_name = self.mne.annotation_segment_colors[description]
-            rect_color = self.annotations_rect_dict[edit_onset]["color"]
-            if color_name != rect_color:
+            if color_name != rect_dict["color"]:
+                rect_dict["color"] = color_name
                 color = _get_color(color_name, self.mne.dark)
                 color.setAlpha(150)
-                pen = self.mne.mkPen(color)
-                brush = mkBrush(color)
-                rect.setPen(pen)
-                rect.setBrush(brush)
+                rect.setPen(self.mne.mkPen(color))
+                rect.setBrush(mkBrush(color))
 
     def update_vline(self):
         """Update representation of vline."""

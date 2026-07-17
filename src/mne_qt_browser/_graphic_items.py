@@ -29,7 +29,7 @@ from mne_qt_browser._utils import _get_channel_scaling, _q_font
 _vline_color = (0, 191, 0)
 
 
-def propagate_to_children(method):  # noqa: D103
+def propagate_to_children(method):
     @functools.wraps(method)
     def wrapper(*args, **kwargs):
         propagate = kwargs.pop("propagate", True)
@@ -94,9 +94,10 @@ class AnnotRegion(LinearRegionItem):
             if region.description != self.description or id(self) == id(region):
                 continue
             values = region.getRegion()
-            if (
-                any(self.getRegion()[0] <= val <= self.getRegion()[1] for val in values)
-                or (values[0] <= self.getRegion()[0] <= values[1])
+            if any(
+                self.getRegion()[0] <= val <= self.getRegion()[1] for val in values
+            ) or (
+                (values[0] <= self.getRegion()[0] <= values[1])
                 and (values[0] <= self.getRegion()[1] <= values[1])
             ):
                 overlapping_regions.append(region)
@@ -302,7 +303,7 @@ class AnnotRegion(LinearRegionItem):
                 pos.setX(pos.x() - shift)
 
         with QSignalBlocker(self.lines[0]):
-            for pos, line in zip(new_pos, self.lines):
+            for pos, line in zip(new_pos, self.lines, strict=True):
                 line.setPos(pos)
         self.prepareGeometryChange()
 
@@ -321,7 +322,7 @@ class AnnotRegion(LinearRegionItem):
             self.label_item.setPos(sum(rgn) / 2, ymax - 0.3)
 
 
-class BaseScaleBar:  # noqa: D101
+class BaseScaleBar:
     def __init__(self, mne, ch_type):
         self.mne = mne
         self.ch_type = ch_type
@@ -383,7 +384,7 @@ class Crosshair(InfiniteLine):
         self.setPos(x)
         self.y = y
 
-    def paint(self, p, *args):  # noqa: D102
+    def paint(self, p, *args):
         super().paint(p, *args)
 
         p.setPen(self.mne.mkPen("r", width=4))
@@ -462,7 +463,7 @@ class DataTrace(PlotCurveItem):
             self.mne.plt.addItem(self.zero_line)
 
     @propagate_to_children
-    def remove(self):  # noqa: D102
+    def remove(self):
         self.mne.plt.removeItem(self)
         # Only for parent trace
         if self.parent_trace is None:
@@ -523,12 +524,12 @@ class DataTrace(PlotCurveItem):
         self.setPen(self.mne.mkPen(_get_color(self.color, self.mne.dark)))
 
     @propagate_to_children
-    def update_range_idx(self):  # noqa: D401
+    def update_range_idx(self):
         """Update when view range or ch_idx changes."""
         self.range_idx = np.argwhere(self.mne.picks == self.ch_idx)[0][0]
 
     @propagate_to_children
-    def update_ypos(self):  # noqa: D401
+    def update_ypos(self):
         """Update when butterfly is toggled or ch_idx changes."""
         if self.mne.butterfly and self.mne.fig_selection is not None:
             self.ypos = self.mne.selection_ypos_dict[self.ch_idx]
@@ -574,7 +575,7 @@ class DataTrace(PlotCurveItem):
         self.setTransform(transform)
 
     @propagate_to_children
-    def update_scale(self):  # noqa: D102
+    def update_scale(self):
         self._apply_transform()
         self.update_zero_line_pos()
 
@@ -630,7 +631,7 @@ class DataTrace(PlotCurveItem):
             starts = self.mne.boundary_times[self.mne.epoch_idx][bool_ixs]
             stops = self.mne.boundary_times[self.mne.epoch_idx + 1][bool_ixs]
 
-            for start, stop in zip(starts, stops):
+            for start, stop in zip(starts, stops, strict=True):
                 data[np.logical_and(start <= times, times <= stop)] = np.nan
 
         assert times.shape[-1] == data.shape[-1]
@@ -769,7 +770,7 @@ class EventLine(InfiniteLine):
         self.mne.plt.addItem(self)
 
 
-class ScaleBar(BaseScaleBar, QGraphicsLineItem):  # noqa: D101
+class ScaleBar(BaseScaleBar, QGraphicsLineItem):
     def __init__(self, mne, ch_type):
         BaseScaleBar.__init__(self, mne, ch_type)
         QGraphicsLineItem.__init__(self)
@@ -789,7 +790,7 @@ class ScaleBar(BaseScaleBar, QGraphicsLineItem):  # noqa: D101
         return line.y1(), line.y2()
 
 
-class ScaleBarText(BaseScaleBar, TextItem):  # noqa: D101
+class ScaleBarText(BaseScaleBar, TextItem):
     def __init__(self, mne, ch_type):
         BaseScaleBar.__init__(self, mne, ch_type)
         TextItem.__init__(self, color="#AA3377")

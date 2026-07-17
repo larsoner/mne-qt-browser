@@ -226,7 +226,7 @@ class LoadThread(QThread):
 
         self.loadingFinished.emit()
 
-    def clean(self):  # noqa: D102
+    def clean(self):
         if self.isRunning():
             self.requestInterruption()  # run() checks this between chunks
             wait_time = 10  # max. waiting time in seconds
@@ -295,7 +295,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
 
         # Prepend our icon search path and set fallback name
         icons_path = f"{Path(__file__).parent}/icons"
-        QIcon.setThemeSearchPaths([icons_path] + QIcon.themeSearchPaths())
+        QIcon.setThemeSearchPaths([icons_path, *QIcon.themeSearchPaths()])
         QIcon.setFallbackThemeName("light")
 
         # control raising with _qt_raise_window
@@ -438,7 +438,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
             )
             self.mne.overview_mode = "channels"
         _check_option(
-            "overview_mode", self.mne.overview_mode, list(overview_items) + ["hidden"]
+            "overview_mode", self.mne.overview_mode, [*overview_items, "hidden"]
         )
         if self.mne.overview_mode == "hidden":
             self.mne.overview_visible = False
@@ -483,7 +483,9 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
         # Add events
         if getattr(self.mne, "event_nums", None) is not None:
             self.mne.events_visible = True
-            for ev_time, ev_id in zip(self.mne.event_times, self.mne.event_nums):
+            for ev_time, ev_id in zip(
+                self.mne.event_times, self.mne.event_nums, strict=True
+            ):
                 color = self.mne.event_color_dict[ev_id]
                 label = self.mne.event_id_rev.get(ev_id, ev_id)
                 event_line = EventLine(self.mne, ev_time, label, color)
@@ -1180,7 +1182,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
     def _vline_slot(self, orig_vline):
         if self.mne.is_epochs:
             ts = self._get_vline_times(orig_vline.value())
-            for vl, xt in zip(self.mne.vline, ts):
+            for vl, xt in zip(self.mne.vline, ts, strict=False):
                 if vl != orig_vline:
                     vl.setPos(xt)
         self.mne.overview_bar.update_vline()
@@ -1207,7 +1209,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                     self.mne.vline.append(vl)
                     self.mne.plt.addItem(vl)
             else:
-                for vl, xt in zip(self.mne.vline, ts):
+                for vl, xt in zip(self.mne.vline, ts, strict=False):
                     vl.setPos(xt)
         else:
             if self.mne.vline is None:
@@ -1301,6 +1303,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                     self.mne.boundary_times[self.mne.epoch_idx],
                     self.mne.boundary_times[self.mne.epoch_idx + 1],
                     self.mne.vline,
+                    strict=False,
                 ):
                     # Avoid off-by-one-error at bmax for VlineLabel
                     bmax -= 1 / self.mne.info["sfreq"]
@@ -1373,7 +1376,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                 add_idxs.remove(aidx)
 
         # Update data of traces outside of yrange (reuse remaining trace items)
-        for trace, ch_idx in zip(off_traces, add_idxs):
+        for trace, ch_idx in zip(off_traces, add_idxs, strict=False):
             trace.set_ch_idx(ch_idx)
             trace.update_color()
             trace.update_data()
@@ -2082,7 +2085,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
         default_button=None,
         icon=None,
         modal=True,
-    ):  # noqa: D102
+    ):
         self.msg_box.setText(f'<font size="+2"><b>{text}</b></font>')
         # The single msg_box instance is reused for all messages, so reset
         # everything a previous call may have set
@@ -2254,7 +2257,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
             elif kind == "drag":
                 _mouseDrag(
                     widget=widget,
-                    positions=[point] + add_points,
+                    positions=[point, *add_points],
                     button=button,
                     modifier=modifier,
                 )
@@ -2299,7 +2302,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
     def _get_scale_bar_texts(self):
         return tuple(t.toPlainText() for t in self.mne.scalebar_texts.values())
 
-    def show(self):  # noqa: D102
+    def show(self):
         # Set raise_window like Matplotlib if possible
         super().show()
         _qt_raise_window(self)
@@ -2423,7 +2426,7 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                     action.trigger()
                     break
         else:
-            raise ValueError(f"action_name={repr(action_name)} not found")
+            raise ValueError(f"action_name={action_name!r} not found")
         QTest.qWait(wait_after)
 
     def _qicon(self, name):

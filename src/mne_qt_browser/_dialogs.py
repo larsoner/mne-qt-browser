@@ -374,7 +374,7 @@ class SettingsDialog(_BaseDialog):
         self.setLayout(layout)
         self.show()
 
-    def closeEvent(self, event):  # noqa: D102
+    def closeEvent(self, event):
         _disconnect(self.ds_method_cmbx.currentTextChanged)
         _disconnect(self.scroll_sensitivity_slider.valueChanged)
         super().closeEvent(event)
@@ -568,7 +568,7 @@ class SettingsDialog(_BaseDialog):
 
             else:
                 raise ValueError(
-                    f"Unknown source: {repr(source)}; when passing a new value it "
+                    f"Unknown source: {source!r}; when passing a new value it "
                     'must be "scaling", "sensitivity", or "unit_change"'
                 )
 
@@ -724,7 +724,7 @@ class ProjDialog(_BaseDialog):
             chkbx.setChecked(bool(self.mne.projs_on[idx]))
 
 
-class SelectionDialog(_BaseDialog):  # noqa: D101
+class SelectionDialog(_BaseDialog):
     def __init__(self, main):
         # Create widget
         super().__init__(main, name="fig_selection", title="Channel selection")
@@ -761,7 +761,7 @@ class SelectionDialog(_BaseDialog):  # noqa: D101
             self.chkbxs[label] = chkbx
             layout.addWidget(chkbx)
 
-        self.mne.old_selection = list(selections_dict)[0]
+        self.mne.old_selection = next(iter(selections_dict))
         self.chkbxs[self.mne.old_selection].setChecked(True)
 
         self._update_highlighted_sensors()
@@ -811,7 +811,7 @@ class SelectionDialog(_BaseDialog):  # noqa: D101
             self.mne.ch_start = 0
         else:
             all_values = list()
-            for key, chs in self.mne.ch_selections.items():
+            for chs in self.mne.ch_selections.values():
                 if np.array_equal(chs, self.mne.picks):
                     self.mne.ch_start = len(all_values)
                     break
@@ -879,7 +879,7 @@ class SelectionDialog(_BaseDialog):  # noqa: D101
 
     def _scroll_to_idx(self, idx):
         all_values = list()
-        label = list(self.mne.ch_selections)[0]
+        label = next(iter(self.mne.ch_selections))
         for key, values in self.mne.ch_selections.items():
             all_values = np.concatenate([all_values, values])
             if idx < len(all_values):
@@ -887,7 +887,7 @@ class SelectionDialog(_BaseDialog):  # noqa: D101
                 break
         self._chkbx_changed(None, label)
 
-    def closeEvent(self, event):  # noqa: D102
+    def closeEvent(self, event):
         super().closeEvent(event)
         if hasattr(self.channel_fig.lasso, "callbacks"):
             self.channel_fig.lasso.callbacks.clear()

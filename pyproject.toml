@@ -71,7 +71,7 @@ filterwarnings = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "D", "I", "UP"]
+select = ["B", "D", "E", "F", "I", "RUF", "UP", "W"]
 exclude = ["__init__.py"]
 ignore = [
     "D100", # Missing docstring in public module

@@ -538,7 +538,7 @@ class ChannelAxis(AxisItem):
             y_diff = np.abs(y_values - ypos)
             ch_idx = int(np.argmin(y_diff, axis=0)[0])
             ch_name = list(self.ch_texts)[ch_idx]
-            trace = [tr for tr in self.mne.traces if tr.ch_name == ch_name][0]
+            trace = next(tr for tr in self.mne.traces if tr.ch_name == ch_name)
             if event.button() == Qt.LeftButton:
                 trace.toggle_bad()
             elif event.button() == Qt.RightButton:
@@ -659,7 +659,7 @@ class RawViewBox(ViewBox):
         elif ev.orientation() == Qt.Vertical:
             self.weakmain().vscroll(scroll)
 
-    def keyPressEvent(self, event):  # noqa: D102
+    def keyPressEvent(self, event):
         self.weakmain().keyPressEvent(event)
 
 
@@ -812,7 +812,7 @@ class OverviewBar(QGraphicsView):
                 self.scene().removeItem(self.bad_line_dict[ch_name])
                 self.bad_line_dict.pop(ch_name)
 
-    def update_bad_epochs(self):  # noqa: D102
+    def update_bad_epochs(self):
         bad_set = set(self.mne.bad_epochs)
         rect_set = set(self.bad_epoch_rect_dict.keys())
 
@@ -841,7 +841,9 @@ class OverviewBar(QGraphicsView):
             getattr(self.mne, "event_nums", None) is not None
             and self.mne.events_visible
         ):
-            for ev_t, ev_id in zip(self.mne.event_times, self.mne.event_nums):
+            for ev_t, ev_id in zip(
+                self.mne.event_times, self.mne.event_nums, strict=True
+            ):
                 color_name = self.mne.event_color_dict[ev_id]
                 color = _get_color(color_name, self.mne.dark)
                 color.setAlpha(100)
@@ -1179,7 +1181,7 @@ class OverviewBar(QGraphicsView):
 
         return x, y
 
-    def keyPressEvent(self, event):  # noqa: D102
+    def keyPressEvent(self, event):
         self.weakmain().keyPressEvent(event)
 
 
@@ -1199,7 +1201,7 @@ class BaseScrollBar(QScrollBar):
             opt = QStyleOptionSlider()
             pos = _mouse_event_position(event)
             # QPointF->QPoint for hitTestComplexControl
-            pos = QPoint(int(round(pos.x())), int(round(pos.y())))
+            pos = QPoint(round(pos.x()), round(pos.y()))
             self.initStyleOption(opt)
             control = self.style().hitTestComplexControl(
                 QStyle.CC_ScrollBar, opt, pos, self

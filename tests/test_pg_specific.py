@@ -119,7 +119,9 @@ def test_annotations_interactions(raw_orig, pg_backend):
     onsets = np.arange(2, 8, 2) + raw_orig.first_time
     durations = np.repeat(1, len(onsets))
     descriptions = ["A", "B", "C"]
-    for onset, duration, description in zip(onsets, durations, descriptions):
+    for onset, duration, description in zip(
+        onsets, durations, descriptions, strict=True
+    ):
         raw_orig.annotations.append(onset, duration, description)
     n_anns = len(raw_orig.annotations)
     fig = raw_orig.plot()
@@ -544,7 +546,7 @@ def test_pg_toolbar_time_plus_minus(raw_orig, pg_backend):
     eps = 0.01
     step = 0.25
     fig._fake_click_on_toolbar_action(MORE_TIME, wait_after=100)
-    xmin_new, xmax_new = fig.mne.viewbox.viewRange()[0]
+    _, xmax_new = fig.mne.viewbox.viewRange()[0]
     assert xmax_new - (xmax + (xmax - xmin * step)) < eps
 
     xmin, xmax = fig.mne.viewbox.viewRange()[0]
@@ -559,18 +561,18 @@ def test_pg_toolbar_time_plus_minus(raw_orig, pg_backend):
 
     xmin, xmax = fig.mne.viewbox.viewRange()[0]
     fig._fake_click_on_toolbar_action(MORE_TIME, wait_after=200)
-    xmin_new, xmax_new = fig.mne.viewbox.viewRange()[0]
+    _, xmax_new = fig.mne.viewbox.viewRange()[0]
     assert xmax_new == xmax  # no effect after span maxed
 
     step = -0.2
     xmin, xmax = fig.mne.viewbox.viewRange()[0]
     fig._fake_click_on_toolbar_action(LESS_TIME, wait_after=200)
-    xmin_new, xmax_new = fig.mne.viewbox.viewRange()[0]
+    _, xmax_new = fig.mne.viewbox.viewRange()[0]
     assert xmax_new == xmax + ((xmax - xmin) * step)
 
     xmin, xmax = fig.mne.viewbox.viewRange()[0]
     fig._fake_click_on_toolbar_action(LESS_TIME, wait_after=200)
-    xmin_new, xmax_new = fig.mne.viewbox.viewRange()[0]
+    _, xmax_new = fig.mne.viewbox.viewRange()[0]
     assert xmax_new == xmax + ((xmax - xmin) * step)
 
     for _ in range(7):

@@ -78,6 +78,9 @@ class AnnotRegion(LinearRegionItem):
         # Regions merged away by the most recent region change, stored for
         # MNEQtBrowser._region_changed to remove
         self._merge_removed_regions = []
+        # Cached visibility so update_visible is cheap when nothing changed
+        # (QGraphicsItems start visible)
+        self._visible = True
 
         self.label_item = TextItem(text=description, anchor=(0.5, 0.5))
         self.label_item.setFont(_q_font(10, bold=True))
@@ -216,6 +219,11 @@ class AnnotRegion(LinearRegionItem):
 
     def update_visible(self, visible):
         """Update if annotation region is visible."""
+        if visible == self._visible:
+            # This runs for every region on every horizontal scroll, so make
+            # the (typical) no-change case cheap
+            return
+        self._visible = visible
         self.setVisible(visible)
         self.label_item.setVisible(visible)
         self.sigToggleVisibility.emit(visible)

@@ -894,3 +894,46 @@ def test_get_onset_idx_float_tolerance(raw_orig, pg_backend):
     # Each annotation still resolves to its own index despite sub-sample drift
     assert fig._get_onset_idx(3.0 + drift) == 1  # "B"
     assert fig._get_onset_idx(1.0 - drift) == 0  # "A"
+
+
+def test_butterfly_scalebars(raw_orig, pg_backend):
+    """Test that butterfly mode matches the matplotlib backend (gh-276)."""
+    raw_orig = raw_orig.copy().crop(tmax=5.0)
+    fig = raw_orig.plot()
+    fig.test_mode = True
+    ch_types = fig.mne.butterfly_type_order
+    assert ch_types == ["grad", "mag", "eeg", "eog", "stim"]
+    normal_texts = fig._get_scale_bar_texts()
+    normal_scale_factor = fig.mne.scale_factor
+
+    def _check_butterfly():
+        # Each channel type gets exactly one y-unit, without extra space at the
+        # top and bottom of the plot
+        assert_allclose(fig.mne.viewbox.viewRange()[1], [0.5, len(ch_types) + 0.5])
+        # Traces are drawn at half amplitude, so the bars span half a unit ...
+        for ci, ch_type in enumerate(ch_types, 1):
+            if ch_type not in fig.mne.scalebars:  # stim has no scalebar
+                continue
+            assert_allclose(
+                fig.mne.scalebars[ch_type].get_ydata(), [ci - 0.25, ci + 0.25]
+            )
+        # ... which keeps the values identical to non-butterfly mode
+        assert fig._get_scale_bar_texts() == normal_texts
+        # Channel types plotted higher up are drawn over the ones below them
+        zvalues = {tr.ch_type: tr.zValue() for tr in fig.mne.traces if not tr.isbad}
+        assert [zvalues[ch_type] for ch_type in ch_types] == sorted(
+            zvalues.values(), reverse=True
+        )
+
+    fig._fake_keypress("b")
+    _check_butterfly()
+
+    # Toggling back and forth is a no-op for the scale factor
+    fig._fake_keypress("b")
+    assert fig.mne.scale_factor == normal_scale_factor
+    assert fig._get_scale_bar_texts() == normal_texts
+
+    # Starting out in butterfly mode gives the same result
+    fig = raw_orig.plot(butterfly=True)
+    fig.test_mode = True
+    _check_butterfly()

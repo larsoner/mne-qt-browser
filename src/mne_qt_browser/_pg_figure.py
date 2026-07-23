@@ -195,6 +195,15 @@ class LoadThread(QThread):
         if self.isInterruptionRequested():
             return
         picks = self.mne.ch_order
+        # _process_data normalizes every channel into its 1-vertical-unit slot.
+        # That normalization has to be undone here: it depends on the visible
+        # range (stim channels are divided by their maximum) and on
+        # self.mne.scalings, which the user can change after precomputing.
+        # _update_data renormalizes the visible range instead. The maxima have
+        # to be taken before _process_data, which returns already-divided data
+        # (only stim rows are needed, and neither the projector nor the filter
+        # touches those, so taking them here matches what _process_data used).
+        stim_maxima = data[picks[browser._stim_mask(picks)]].max(axis=-1)
         # Deactivate remove_dc because DC is removed for the visible range instead
         stashed_remove_dc = self.mne.remove_dc
         self.mne.remove_dc = False
@@ -205,10 +214,7 @@ class LoadThread(QThread):
         if self.mne.remove_dc is False:
             self.mne.remove_dc = stashed_remove_dc
 
-        ch_type_ordered = self.mne.ch_types[self.mne.ch_order]
-        for chii in range(data.shape[0]):
-            ch_type = ch_type_ordered[chii]
-            data[chii, :] *= self.mne.scalings[ch_type]
+        data *= browser._get_display_norms(picks, stim_maxima)[:, np.newaxis]
 
         if self.isInterruptionRequested():
             return
@@ -1606,12 +1612,37 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
 
         return data
 
+    def _stim_mask(self, picks):
+        """Return which of ``picks`` are stim channels."""
+        return self.mne.ch_types[picks] == "stim"
+
+    def _get_display_norms(self, picks, stim_maxima):
+        """Get the divisors that scale each channel into its 1-unit slot.
+
+        This mirrors the scaling step of ``BrowserBase._process_data`` (which the
+        precompute path has to undo and redo for the visible range, see
+        ``LoadThread.run`` and ``_update_data``). ``stim_maxima`` are the maxima of
+        the (non-inverted) stim channels of the range being displayed.
+        """
+        this_names = self.mne.ch_names[picks]
+        this_types = self.mne.ch_types[picks]
+        norms = np.array([self.mne.scalings[t] for t in this_types], float)
+        norms[self._stim_mask(picks)] = stim_maxima
+        # Whitened channels are already in units of standard deviation, unless
+        # they are bad (those are not whitened)
+        norms[
+            np.isin(this_names, self.mne.whitened_ch_names)
+            & np.isin(this_names, self.mne.info["bads"], invert=True)
+        ] = self.mne.scalings["whitened"]
+        norms[norms == 0] = 1
+        return 2 * norms
+
     def _update_data(self):
         if self.mne.data_precomputed:
             # get start/stop samples
             start, stop = self._get_start_stop()
             self.mne.times = self.mne.global_times[start:stop]
-            self.mne.data = self.mne.global_data[:, start:stop]
+            data = self.mne.global_data[:, start:stop]
 
             # remove DC locally but keep track of the offset
             if self.mne.remove_dc:
@@ -1623,11 +1654,23 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
                     warnings.filterwarnings(
                         "ignore", "Mean of empty slice", RuntimeWarning
                     )
-                    dc_offset = np.nanmean(self.mne.data, axis=1, keepdims=True)
-                self.mne.zero_line_offset = -dc_offset[:, 0]
-                self.mne.data = self.mne.data - dc_offset
+                    dc_offset = np.nanmean(data, axis=1, keepdims=True)
+                data = data - dc_offset
             else:
-                self.mne.zero_line_offset = None
+                dc_offset = None
+
+            # Apply the scaling that LoadThread undid, using the visible range (so
+            # that stim channels and self.mne.scalings changes behave as they do
+            # without precomputation). global_data is sign-inverted for display, so
+            # the maxima of the stim channels are the negated minima here.
+            picks = self.mne.ch_order
+            norms = self._get_display_norms(
+                picks, -data[self._stim_mask(picks)].min(axis=-1)
+            )[:, np.newaxis]
+            self.mne.data = data / norms
+            self.mne.zero_line_offset = (
+                None if dc_offset is None else -(dc_offset / norms)[:, 0]
+            )
         else:
             # While data is not precomputed get data only from shown range and process
             # only those

@@ -89,6 +89,7 @@ from mne_qt_browser._graphic_items import (
 )
 from mne_qt_browser._utils import (
     DATA_CH_TYPES_ORDER,
+    _close_splash,
     _disconnect,
     _get_channel_scaling,
     _methpartial,
@@ -2360,6 +2361,12 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
         # Set raise_window like Matplotlib if possible
         super().show()
         _qt_raise_window(self)
+        if getattr(self.mne, "splash", None) is not None:
+            # Only take the splash down now that there is a window to replace it
+            # with. Qt sends the show event above before the window actually
+            # appears, so let that happen first -- the 3D backend does the same.
+            QApplication.processEvents()
+            _close_splash(self)
 
     def _close_event(self, fig=None):
         """Force calling of the MPL figure close event."""
@@ -2382,6 +2389,9 @@ class MNEQtBrowser(BrowserBase, QMainWindow, metaclass=_PGMetaClass):  # type: i
     def closeEvent(self, event):
         """Customize close event."""
         event.accept()
+        # Normally show() has taken it down long ago, but a browser that is
+        # closed without ever being shown must not leave one behind
+        _close_splash(self)
         # Stop the load thread before tearing down what it writes to
         if getattr(self, "load_thread", None) is not None:
             self.load_thread.clean()

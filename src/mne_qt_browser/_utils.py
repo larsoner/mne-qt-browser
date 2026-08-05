@@ -61,22 +61,36 @@ def _q_font(point_size, bold=False):
 
 
 def _safe_splash(meth):
+    """Take the splash screen down if the browser fails to build.
+
+    On success it is instead left up for ``MNEQtBrowser.show()`` to close, so
+    that it stays on screen until the window it announces is actually there.
+    """
+
     @functools.wraps(meth)
     def func(self, *args, **kwargs):
         try:
             meth(self, *args, **kwargs)
-        finally:
-            try:
-                self.mne.splash.close()
-            except Exception:
-                pass
-            finally:
-                try:
-                    del self.mne.splash
-                except Exception:
-                    pass
+        except Exception:
+            _close_splash(self)
+            raise
 
     return func
+
+
+def _close_splash(browser):
+    """Close the splash screen, if there still is one."""
+    # Anything here can fail if __init__ raised before getting to it
+    splash = getattr(getattr(browser, "mne", None), "splash", None)
+    try:
+        del browser.mne.splash
+    except Exception:
+        pass
+    if splash is not None:
+        try:
+            splash.close()
+        except Exception:
+            pass
 
 
 def _screen(widget):

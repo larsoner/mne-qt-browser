@@ -86,6 +86,28 @@ def test_marimo_pump_new_loop(qapp, monkeypatch):
     asyncio.run(restart())
 
 
+def test_marimo_qt_aware_loop(monkeypatch):
+    """No pump when the asyncio loop already drives Qt (a qasync loop)."""
+    fake = types.ModuleType("marimo")
+    fake.running_in_notebook = lambda: True
+    monkeypatch.setitem(sys.modules, "marimo", fake)
+    monkeypatch.setattr(_pg_figure, "_MARIMO_PUMP", None)
+
+    class FakeQasyncLoop(asyncio.SelectorEventLoop):
+        pass
+
+    FakeQasyncLoop.__module__ = "qasync"
+
+    async def main():
+        assert _pg_figure._setup_marimo() is None
+
+    loop = FakeQasyncLoop()
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
+
+
 def test_marimo_pump_gives_up(qapp, monkeypatch):
     """Pump stops instead of spinning forever when no window ever appears."""
     fake = types.ModuleType("marimo")

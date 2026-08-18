@@ -2599,6 +2599,10 @@ def _setup_marimo(interval=0.02):
         loop = asyncio.get_running_loop()
     except RuntimeError:  # notebook executed as a plain script
         return None
+    # A qasync loop (marimo's proposed runtime.gui_event_loop = "qt") already drives
+    # Qt itself; a pump task would only cause re-entrant task-step errors
+    if type(loop).__module__.partition(".")[0] == "qasync":
+        return None
     global _MARIMO_PUMP
     if (
         _MARIMO_PUMP is not None

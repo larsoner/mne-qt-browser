@@ -3,8 +3,10 @@
 
 """Base classes and functions for 2D browser backends."""
 
+import asyncio
 import inspect
 import platform
+import sys
 import warnings
 import weakref
 from ast import literal_eval
@@ -2567,6 +2569,10 @@ def _mouseDrag(widget, positions, button, modifier=None):
     _mouseRelease(widget, positions[-1], button, modifier)
 
 
+_MARIMO_PUMP = None  # asyncio task that pumps Qt events under marimo
+_MARIMO_PUMP_GRACE = 10.0  # idle seconds to wait for a window before giving up
+
+
 # modified from: https://github.com/pyvista/pyvistaqt
 def _setup_ipython(ipython=None):
     # IPython magic
@@ -2581,8 +2587,51 @@ def _setup_ipython(ipython=None):
     return ipython
 
 
+def _setup_marimo(interval=0.02):
+    """Keep Qt windows responsive in marimo, which runs asyncio instead of a Qt loop."""
+    if "marimo" not in sys.modules:
+        return None
+    import marimo
+
+    if not getattr(marimo, "running_in_notebook", lambda: False)():
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # notebook executed as a plain script
+        return None
+    global _MARIMO_PUMP
+    if (
+        _MARIMO_PUMP is not None
+        and not _MARIMO_PUMP.done()
+        and _MARIMO_PUMP.get_loop() is loop  # a restarted kernel gets a new loop
+    ):
+        return _MARIMO_PUMP
+
+    async def _pump():
+        # marimo only gets to run this between cells, which is exactly when a Qt loop
+        # would otherwise be idle; give Qt a slice of time to drain its event queue.
+        deadline = loop.time() + _MARIMO_PUMP_GRACE
+        seen_window = False
+        while True:
+            await asyncio.sleep(interval)
+            app = QApplication.instance()
+            if app is None:
+                break
+            app.processEvents()
+            if any(w.isVisible() for w in app.topLevelWidgets()):
+                seen_window = True
+            elif seen_window or loop.time() > deadline:
+                # nothing left to pump, or a window never showed up (failed browser);
+                # either way the next plot starts a new task
+                break
+
+    _MARIMO_PUMP = loop.create_task(_pump())
+    return _MARIMO_PUMP
+
+
 def _init_browser(**kwargs):
     _setup_ipython()
+    _setup_marimo()
     # Experimental mode is needed for fast code paths on pyqtgraph < 0.13.7,
     # but on PySide6 6.10+ the combination segfaults
     if not check_version("pyqtgraph", "0.13.7") and not (
